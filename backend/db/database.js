@@ -9,7 +9,6 @@ const db = new sqlite3.Database("./inventory.db", (err) => {
 });
 
 function createTables() {
-  // Schema for the products table
   const createProductsTable = `
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,6 +29,30 @@ function createTables() {
       console.error("Error creating products table:", err.message);
     } else {
       console.log("Products table ensured.");
+      createInventoryLogsTable(); // Call the new table creation function here
+    }
+  });
+}
+
+// New function to create the logs table
+function createInventoryLogsTable() {
+  const createLogsTable = `
+      CREATE TABLE IF NOT EXISTS inventory_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        old_stock INTEGER NOT NULL,
+        new_stock INTEGER NOT NULL,
+        changed_by TEXT NOT NULL DEFAULT 'admin',
+        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_id) REFERENCES products(id)
+      );
+    `;
+
+  db.run(createLogsTable, (err) => {
+    if (err) {
+      console.error("Error creating inventory_logs table:", err.message);
+    } else {
+      console.log("Inventory logs table ensured.");
     }
   });
 }
