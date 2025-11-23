@@ -2,6 +2,11 @@ const express = require("express");
 const { body, validationResult } = require("express-validator");
 const db = require("../db/database");
 const router = express.Router();
+const multer = require("multer");
+const csv = require("csv-parser");
+const fs = require("fs");
+
+const upload = multer({ dest: "uploads/" });
 
 // --- Shared Base Validation Rules (Reusable) ---
 const baseProductValidationRules = [
@@ -14,7 +19,103 @@ const baseProductValidationRules = [
     .isInt({ min: 0 })
     .withMessage("Stock must be a non-negative integer"),
 ];
+// --- POST /api/products/import (CSV Import API) ---
+// Use multer middleware to handle a single file upload named 'csvFile'
+router.post("/import", upload.single("csvFile"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: "No file uploaded." });
+  }
 
+  const results = [];
+  const duplicates = [];
+  let addedCount = 0;
+  const filePath = req.file.path;
+
+  // Use fs.createReadStream and csv-parser to process the file
+  fs.createReadStream(filePath)
+    .pipe(csv())
+    .on("data", (data) => {
+      results.push(data);
+    })
+    .on("end", () => {
+      db.serialize(() => {
+        db.run("BEGIN TRANSACTION");
+
+        results.forEach((product, index) => {
+          // Check for duplicate name (case-insensitive)
+          db.get(
+            "SELECT id FROM products WHERE name = ? COLLATE NOCASE",
+            [product.name],
+            (err, row) => {
+              if (err) {
+                console.error(
+                  `Error checking duplicate for ${product.name}: ${err.message}`
+                );
+                return;
+              }
+
+              if (row) {
+                duplicates.push({ name: product.name, existingId: row.id });
+              } else {
+                // No duplicate, insert the new product
+                const sql = `INSERT INTO products (name, unit, category, brand, stock, status, image) VALUES (?, ?, ?, ?, ?, ?, ?)`;
+                const params = [
+                  product.name,
+                  product.unit,
+                  product.category,
+                  product.brand,
+                  product.stock || 0,
+                  product.status,
+                  product.image || null,
+                ];
+
+                db.run(sql, params, (insertErr) => {
+                  if (insertErr) {
+                    console.error(
+                      `Error inserting ${product.name}: ${insertErr.message}`
+                    );
+                  } else {
+                    addedCount++;
+                  }
+                });
+              }
+
+              // Check if this is the last iteration
+              if (index === results.length - 1) {
+                db.run("COMMIT", (commitErr) => {
+                  fs.unlinkSync(filePath);
+                  if (commitErr) {
+                    return res.status(500).json({
+                      message: "Transaction failed",
+                      error: commitErr.message,
+                    });
+                  }
+                  res.status(200).json({
+                    message: "CSV import processed.",
+                    added: addedCount,
+                    skipped: duplicates.length, // Skipped count is known immediately
+                    duplicates: duplicates,
+                  });
+                });
+              }
+            }
+          );
+        });
+
+        // Handling the case where the CSV was empty
+        if (results.length === 0) {
+          db.run("COMMIT");
+          fs.unlinkSync(filePath);
+          res.status(200).json({
+            message: "CSV file was empty.",
+            added: 0,
+            skipped: 0,
+            duplicates: [],
+          });
+        }
+      });
+    });
+});
 // --- GET /api/products (and search) ---
 router.get("/", (req, res) => {
   const { name } = req.query;
