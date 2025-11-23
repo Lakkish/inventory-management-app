@@ -116,6 +116,28 @@ router.post("/import", upload.single("csvFile"), (req, res) => {
       });
     });
 });
+router.get("/export", (req, res) => {
+  const sql =
+    "SELECT name, unit, category, brand, stock, status, image, created_at, updated_at FROM products";
+
+  db.all(sql, [], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "No products to export." });
+    }
+
+    const headers = Object.keys(rows[0]).join(",") + "\n";
+    const csvData = rows.map((row) => Object.values(row).join(",")).join("\n");
+    const fullCsv = headers + csvData;
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", 'attachment; filename="products.csv"');
+    res.status(200).send(fullCsv);
+  });
+});
 // --- GET /api/products (and search) ---
 router.get("/", (req, res) => {
   const { name } = req.query;
