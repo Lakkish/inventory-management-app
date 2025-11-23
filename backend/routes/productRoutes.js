@@ -181,4 +181,25 @@ router.put("/:id", baseProductValidationRules, (req, res) => {
   );
 });
 
+router.get("/:id/history", (req, res) => {
+  const { id } = req.params;
+
+  const sql = `
+    SELECT * FROM inventory_logs 
+    WHERE product_id = ? 
+    ORDER BY timestamp DESC
+  `;
+
+  db.all(sql, [id], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    if (rows.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "No inventory history found for this product ID." });
+    }
+    res.json(rows);
+  });
+});
 module.exports = router;
