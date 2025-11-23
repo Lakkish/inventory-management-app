@@ -86,9 +86,10 @@ router.put("/:id", baseProductValidationRules, (req, res) => {
 
   const { id } = req.params;
   const { name, unit, category, brand, stock, status, image } = req.body;
-  // Manual check for uniqueness for an EXISTING product (exclude current id)
+
+  // Manual check for uniqueness for an existing product (excluding its own ID)
   db.get(
-    "SELECT id FROM products WHERE name = ? COLLATE NOCASE AND id != ?",
+    "SELECT id, stock AS old_stock FROM products WHERE name = ? COLLATE NOCASE AND id != ?",
     [name, id],
     (err, row) => {
       if (err) {
@@ -100,26 +101,82 @@ router.put("/:id", baseProductValidationRules, (req, res) => {
           .json({ message: "Product name must be unique." });
       }
 
-      const sql = `
-      UPDATE products
-      SET name = ?, unit = ?, category = ?, brand = ?, stock = ?, status = ?, image = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `;
-      const params = [name, unit, category, brand, stock, status, image, id];
+      // Now fetch the *original* stock value before the update
+      db.get(
+        "SELECT stock AS old_stock FROM products WHERE id = ?",
+        [id],
+        (err, product) => {
+          if (err || !product) {
+            return res
+              .status(404)
+              .json({ message: "Product not found before update check." });
+          }
 
-      db.run(sql, params, function (updateErr) {
-        if (updateErr) {
-          return res.status(500).json({ error: updateErr.message });
+          const oldStock = product.old_stock;
+          const newStock = stock;
+          const stockChanged = oldStock !== newStock;
+
+          // Use db.serialize() to run multiple commands sequentially and ensure the log happens after the update
+          db.serialize(() => {
+            // 1. Run the UPDATE query
+            const updateSql = `
+          UPDATE products
+          SET name = ?, unit = ?, category = ?, brand = ?, stock = ?, status = ?, image = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `;
+            const updateParams = [
+              name,
+              unit,
+              category,
+              brand,
+              stock,
+              status,
+              image,
+              id,
+            ];
+
+            db.run(updateSql, updateParams, function (updateErr) {
+              if (updateErr) {
+                return res.status(500).json({ error: updateErr.message });
+              }
+              if (this.changes === 0) {
+                return res.status(404).json({
+                  message: "Product not found or data was identical.",
+                });
+              }
+
+              // 2. If stock changed, insert into logs table
+              if (stockChanged) {
+                const logSql = `
+              INSERT INTO inventory_logs (product_id, old_stock, new_stock, changed_by)
+              VALUES (?, ?, ?, ?)
+            `;
+
+                const logParams = [id, oldStock, newStock, "admin"];
+
+                db.run(logSql, logParams, (logErr) => {
+                  if (logErr) {
+                    console.error(
+                      "Failed to insert inventory log:",
+                      logErr.message
+                    );
+                  }
+                  console.log(
+                    `Logged stock change for product ${id}: ${oldStock} -> ${newStock}`
+                  );
+                });
+              }
+
+              // 3. Send final response after both operations are queued
+              res.json({
+                id: id,
+                ...req.body,
+                message: "Product updated successfully, logs tracked.",
+              });
+            });
+          });
         }
-        if (this.changes === 0) {
-          return res.status(404).json({ message: "Product not found." });
-        }
-        res.json({
-          id: id,
-          ...req.body,
-          message: "Product updated successfully.",
-        });
-      });
+      );
     }
   );
 });
