@@ -4,11 +4,12 @@ const db = require("./db/database");
 const productRoutes = require("./routes/productRoutes");
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3001;
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    credentials: true,
   })
 );
 

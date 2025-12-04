@@ -7,6 +7,39 @@ const csv = require("csv-parser");
 const fs = require("fs");
 
 const upload = multer({ dest: "uploads/" });
+// Add to your server.js or routes
+const fs = require("fs");
+const path = require("path");
+
+// Backup database (call before redeploying)
+app.get("/api/backup", (req, res) => {
+  const dbPath = path.join("/tmp", "inventory.db");
+
+  if (fs.existsSync(dbPath)) {
+    const data = fs.readFileSync(dbPath);
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="inventory-backup.db"'
+    );
+    res.send(data);
+  } else {
+    res.status(404).json({ error: "Database file not found" });
+  }
+});
+
+// Restore database (POST backup file)
+app.post("/api/restore", (req, res) => {
+  if (!req.files || !req.files.backup) {
+    return res.status(400).json({ error: "No backup file provided" });
+  }
+
+  const backupFile = req.files.backup;
+  const dbPath = path.join("/tmp", "inventory.db");
+
+  fs.writeFileSync(dbPath, backupFile.data);
+  res.json({ message: "Database restored successfully" });
+});
 
 // --- Shared Base Validation Rules (Reusable) ---
 const baseProductValidationRules = [
